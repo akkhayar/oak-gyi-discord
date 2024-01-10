@@ -1,0 +1,6 @@
+pynacl
+PyYaml
+psutil
+python-dotenv
+pycord
+openai
