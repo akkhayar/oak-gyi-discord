@@ -1,13 +1,15 @@
 import openai
 import discord
 from discord.commands import slash_command
+from asyncio import sleep
 from discord.ext import commands
+from traceback import print_exc
 from bot.constants import DEBUG_SERVER_ID, SEC_DEBUG_SERVER_ID
 
 MAX_HISTORY_CHARS = 6000
 
 
-def split_long_message(message, max_length=3500):
+def split_long_message(message, max_length=3200):
     """Split a long message into chunks of a specified max length."""
     return [message[i : i + max_length] for i in range(0, len(message), max_length)]
 
@@ -21,27 +23,53 @@ def trim_history(history, max_chars=MAX_HISTORY_CHARS):
     return history
 
 
+ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/gif"]
+GPT_IMAGE_MODELS = ["dall-e-3"]
+
+
 class GPTRelay(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.conversation_history = {}
         self.openai_client = openai.OpenAI()
-        self.allowed_mime_types = ["image/png", "image/jpeg", "image/gif"]
         self.system_message = "You are a helpful A.I. assistant."
 
-    def determine_model(self, message):
+    async def determine_model(self, message):
         if message.attachments:
             model = "gpt-4-vision-preview"
+        elif await self.is_dalle_prompt(message.content):
+            model = "dall-e-3"
         else:
             model = "gpt-4"
 
         return model
 
+    async def is_dalle_prompt(self, prompt: str):
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Determine if the following input is a request to generate an image. Respond with either 'Yes' or 'No'.\n\n"
+                            f"Input: {prompt}"
+                        ),
+                    }
+                ],
+                max_tokens=30,
+            )
+        except Exception:
+            print_exc()
+        else:
+            return response.choices[0].message.content.lower() == "yes"
+        return False
+
     async def create_content(self, message):
         if message.attachments:
             content = [{"type": "text", "text": message.content}]
             for file in message.attachments:
-                if not file.content_type in self.allowed_mime_types:
+                if not file.content_type in ALLOWED_MIME_TYPES:
                     await self.reply_error(
                         message,
                         "Bad File Upload",
@@ -71,6 +99,7 @@ class GPTRelay(commands.Cog):
                 else "",
                 mention_author=False,
             )
+            await sleep(0.5)
 
     async def reply_error(self, message: discord.Message, title: str, error: str):
         embed = discord.Embed(
@@ -92,33 +121,45 @@ class GPTRelay(commands.Cog):
         if "gpt" not in message.channel.name:  # type: ignore
             return
 
-        # prepare a trimmed history of the conversation
-        channel_history = trim_history(
-            self.conversation_history.get(
-                message.channel.id,
-                [
-                    {
-                        "role": "system",
-                        "content": self.system_message,
-                    },
-                ],
+        async with message.channel.typing():
+            model = await self.determine_model(message)
+
+        if model in GPT_IMAGE_MODELS:
+            runner = self.openai_client.images.generate
+            kwargs = {
+                "model": model,
+                "prompt": message.content,
+                "size": "1024x1024",
+                "quality": "standard",
+                "n": 1,
+            }
+        else:
+            # prepare a trimmed history of the conversation
+            channel_history = trim_history(
+                self.conversation_history.get(
+                    message.channel.id,
+                    [{"role": "system", "content": self.system_message}],
+                )
             )
-        )
-        content = await self.create_content(message)
-        if content is None:
-            return
+            content = await self.create_content(message)
+            if content is None:
+                return
+            channel_history.append({"role": "user", "content": content})
 
-        model = self.determine_model(message)
-
-        channel_history.append({"role": "user", "content": content})
+            runner = self.openai_client.chat.completions.create
+            kwargs = {
+                "model": model,
+                "messages": channel_history,
+                "max_tokens": 500,
+            }
 
         async with message.channel.typing():
             try:
-                response = self.openai_client.chat.completions.create(
-                    model=model, messages=channel_history, max_tokens=500
-                )
+                response = runner(**kwargs)
 
-                if response.choices and len(response.choices) > 0:
+                if kwargs["model"] in GPT_IMAGE_MODELS:
+                    await message.reply(response.data[0].url, mention_author=False)
+                else:
                     reply = response.choices[0].message.content
                     await self.relay_response(message, model, reply)  # type: ignore
                     channel_history.append({"role": "assistant", "content": reply})
