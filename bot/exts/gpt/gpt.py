@@ -32,6 +32,7 @@ class GPTRelay(commands.Cog):
         self.bot = bot
         self.conversation_history = {}
         self.openai_client = openai.OpenAI()
+        self.allowed_dm = [705000432518430720, 368671236370464769]
         self.system_message = "You are a helpful A.I. assistant."
 
     async def determine_model(self, message):
@@ -111,15 +112,18 @@ class GPTRelay(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if (
-            message.guild is None
-            or message.guild.id not in [DEBUG_SERVER_ID, SEC_DEBUG_SERVER_ID]
-            or message.author == self.bot.user
-        ):
+        if message.author == self.bot.user:
             return
 
-        if "gpt" not in message.channel.name:  # type: ignore
-            return
+        if message.guild:
+            if message.guild.id not in [DEBUG_SERVER_ID, SEC_DEBUG_SERVER_ID]:
+                return
+
+            if "gpt" not in message.channel.name:  # type: ignore
+                return
+        else:
+            if message.author.id not in self.allowed_dm:
+                return
 
         async with message.channel.typing():
             model = await self.determine_model(message)

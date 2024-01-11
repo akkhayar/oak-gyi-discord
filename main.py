@@ -12,6 +12,9 @@ class Bot(commands.Bot):
     def __init__(self):
         intents = Intents.default()
         intents.message_content = True
+        intents.dm_messages = True
+        intents.members = True
+
         super().__init__(
             command_prefix=PREFIX,
             intents=intents,
