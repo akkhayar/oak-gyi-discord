@@ -1,5 +1,7 @@
 import openai
 import discord
+import asyncio
+
 from discord.commands import slash_command
 from asyncio import sleep
 from discord.ext import commands
@@ -9,9 +11,27 @@ from bot.constants import DEBUG_SERVER_ID, SEC_DEBUG_SERVER_ID
 MAX_HISTORY_CHARS = 6000
 
 
-def split_long_message(message, max_length=3200):
-    """Split a long message into chunks of a specified max length."""
-    return [message[i : i + max_length] for i in range(0, len(message), max_length)]
+def split_long_message(message, max_length=1900):
+    """Split a long message into chunks that respect word boundaries and new lines, with a specified max length."""
+    words = message.split(" ")
+    chunks = []
+    current_chunk = ""
+
+    for word in words:
+        # Check if adding the next word would exceed the max_length
+        if len(current_chunk + word + " ") > max_length:
+            # If it does, add the current chunk to chunks and start a new chunk
+            chunks.append(current_chunk.strip())
+            current_chunk = word + " "
+        else:
+            # If not, add the word to the current chunk
+            current_chunk += word + " "
+
+    # Add the last chunk if it's not empty
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
 
 
 def trim_history(history, max_chars=MAX_HISTORY_CHARS):
@@ -28,12 +48,15 @@ GPT_IMAGE_MODELS = ["dall-e-3"]
 
 
 class GPTRelay(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.conversation_history = {}
         self.openai_client = openai.OpenAI()
         self.allowed_dm = [705000432518430720, 368671236370464769]
         self.system_message = "You are a helpful A.I. assistant."
+
+        self.queue = asyncio.Queue()
+        self.bot.loop.create_task(self.queue_worker())
 
     async def determine_model(self, message):
         if message.attachments:
@@ -93,13 +116,15 @@ class GPTRelay(commands.Cog):
 
     async def relay_response(self, message: discord.Message, model: str, response: str):
         message_parts = split_long_message(response)
+
         for part in message_parts:
-            await message.reply(
-                part + f"\n\n`> Model: {model} · System: {self.system_message}`"
-                if part == message_parts[-1]
-                else "",
-                mention_author=False,
-            )
+            if part == message_parts[-1]:
+                part += f"\n\n`> Model: {model} · System: {self.system_message}`"
+
+            if part == message_parts[0]:
+                await message.reply(part, mention_author=False)
+            else:
+                await message.channel.send(part)
             await sleep(0.5)
 
     async def reply_error(self, message: discord.Message, title: str, error: str):
@@ -125,6 +150,18 @@ class GPTRelay(commands.Cog):
             if message.author.id not in self.allowed_dm:
                 return
 
+        await self.queue.put(self.process_message(message))
+
+    async def queue_worker(self):
+        """A worker that processes tasks from the queue."""
+        while True:
+            task = await self.queue.get()
+            try:
+                await task
+            finally:
+                self.queue.task_done()
+
+    async def process_message(self, message: discord.Message):
         async with message.channel.typing():
             model = await self.determine_model(message)
 
@@ -166,7 +203,9 @@ class GPTRelay(commands.Cog):
                 else:
                     reply = response.choices[0].message.content
                     await self.relay_response(message, model, reply)  # type: ignore
-                    channel_history.append({"role": "assistant", "content": reply})
+                    self.conversation_history[message.channel.id].append(
+                        {"role": "assistant", "content": reply}
+                    )
 
             except openai.BadRequestError as e:
                 await self.reply_error(
@@ -190,7 +229,7 @@ class GPTRelay(commands.Cog):
                     "Unexpected Error",
                     "An unexpected error occurred.",
                 )
-                print(f"Error: {e}")
+                print_exc()
 
     @slash_command(name="clear-gpt", guild_ids=(DEBUG_SERVER_ID, SEC_DEBUG_SERVER_ID))
     async def clearhistory(self, ctx):
