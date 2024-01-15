@@ -203,9 +203,10 @@ class GPTRelay(commands.Cog):
                 else:
                     reply = response.choices[0].message.content
                     await self.relay_response(message, model, reply)  # type: ignore
-                    self.conversation_history[message.channel.id].append(
-                        {"role": "assistant", "content": reply}
-                    )
+                    if message.channel.id in self.conversation_history:
+                        self.conversation_history[message.channel.id].append(
+                            {"role": "assistant", "content": reply}
+                        )
 
             except openai.BadRequestError as e:
                 await self.reply_error(
