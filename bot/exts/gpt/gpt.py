@@ -60,18 +60,18 @@ class GPTRelay(commands.Cog):
 
     async def determine_model(self, message):
         if message.attachments:
-            model = "gpt-4-vision-preview"
+            model = "o1-preview"
         elif await self.is_dalle_prompt(message.content):
             model = "dall-e-3"
         else:
-            model = "gpt-4"
+            model = "o1-preview"
 
         return model
 
     async def is_dalle_prompt(self, prompt: str):
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "user",
