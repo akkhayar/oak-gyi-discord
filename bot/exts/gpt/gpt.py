@@ -60,11 +60,11 @@ class GPTRelay(commands.Cog):
 
     async def determine_model(self, message):
         if message.attachments:
-            model = "o1-preview"
+            model = "gpt-4o"
         elif await self.is_dalle_prompt(message.content):
             model = "dall-e-3"
         else:
-            model = "o1-preview"
+            model = "gpt-4o"
 
         return model
 
