@@ -7,7 +7,7 @@ from io import StringIO
 from bot.constants import DEBUG_SERVER_ID
 from cloudflare import AsyncCloudflare
 
-printable = ["▲", *string.printable]
+printable = ["▲", *string.printable, "⚡️"]
 
 
 def remove_ascii_codes(text):
