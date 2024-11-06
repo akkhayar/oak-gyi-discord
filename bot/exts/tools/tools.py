@@ -42,7 +42,7 @@ class Tools(commands.Cog):
             "\n".join(
                 f"{l['ts']}\t{remove_ascii_codes(l['line'])}"
                 for l in logs["data"]
-                if any(a in l["line"] for a in ["WARN", "▲"])
+                if any(a in l["line"] for a in ["WARN", "▲", "⚡️"])
             )
         )
 
